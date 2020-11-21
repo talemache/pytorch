@@ -70,6 +70,61 @@ void Backend::registerBackend() {
   TORCH_CHECK(false, "Registering third-party backend is currently not supported by TorchScript-friendly c10d");
 }
 
+c10::intrusive_ptr<DistributedC10d> DistributedC10d::get() {
+  static c10::intrusive_ptr<DistributedC10d> singleton =
+      c10::make_intrusive<DistributedC10d>();
+
+  return singleton;
+}
+
+c10::intrusive_ptr<ProcessGroup> DistributedC10d::getProcessGroupByName(const std::string& name) const {
+  auto it = std::find_if(
+      pg_names_.begin(),
+      pg_names_.end(),
+      [&](const std::pair<c10::intrusive_ptr<ProcessGroup>, std::string>&
+              pg_name) { return pg_name.second == name; });
+
+  if (it == pg_names_.end()) {
+    std::stringstream error;
+    error << "Unable to find process group with name: ";
+    error << name;
+    error << " , instead we have ";
+    error << pg_names_.size() << " process groups: {";
+    for (const auto& pg : pg_names_) {
+      error << static_cast<void*>(pg.first.get());
+      error << " with name: ";
+      error << pg.second;
+      error << ", ";
+    }
+    error << "}";
+    TORCH_CHECK(false, error.str());
+  }
+
+  TORCH_CHECK(it->first.defined(), "found a process group that's null");
+
+  return it->first;
+}
+
+std::string DistributedC10d::getNameOfProcessGroup(const c10::intrusive_ptr<ProcessGroup>& pg) const {
+  auto it = pg_names_.find(pg);
+  if (it == pg_names_.end()) {
+    std::stringstream error;
+    error << "Unable to find name of process group ";
+    error << static_cast<void*>(pg.get());
+    error << "instead we have " << pg_names_.size() << " process groups: {";
+    for (const auto& pg : pg_names_) {
+      error << static_cast<void*>(pg.first.get());
+      error << " with name: ";
+      error << pg.second;
+      error << ", ";
+    }
+    error << "}";
+    TORCH_CHECK(false, error.str());
+  }
+
+  return it->second;
+}
+
 c10::intrusive_ptr<ProcessGroup> DistributedC10d::newProcessGroupHelper(
     const int64_t world_size,
     const int64_t rank,
@@ -89,13 +144,13 @@ c10::intrusive_ptr<ProcessGroup> DistributedC10d::newProcessGroupHelper(
       [&](const std::pair<c10::intrusive_ptr<ProcessGroup>, std::string>&
               pg_name) { return pg_name.second == *group_name; });
 
-  if (it == pg_names_.end()) {
+  if (it != pg_names_.end()) {
     throw std::runtime_error(
         "The specified group name has already been "
         "created, please use a different group name");
   }
 
-  bool is_default_group = pg_group_ranks_.size() == 0;
+  bool is_default_group = (group_ranks.size() == 0);
 
   c10::intrusive_ptr<ProcessGroup> pg;
 
@@ -146,7 +201,9 @@ c10::intrusive_ptr<ProcessGroup> DistributedC10d::newProcessGroupHelper(
       options.threads = options.devices.size() * 2;
       pg = c10::make_intrusive<ProcessGroupGloo>(
           prefix_store, rank, world_size, options);
-#endif
+#else
+    TORCH_CHECK(false, "Attempting to create GLOO-based process group while GLOO is either not enabled or built")
+#endif // USE_C10D_GLOO
     } else if (backend == "nccl") {
 #ifdef USE_C10D_NCCL
       auto options = c10::make_intrusive<ProcessGroupNCCL::Options>();
@@ -155,10 +212,12 @@ c10::intrusive_ptr<ProcessGroup> DistributedC10d::newProcessGroupHelper(
       options->opTimeout = timeout;
       pg = c10::make_intrusive<ProcessGroupNCCL>(
           prefix_store, rank, world_size, options);
-#endif
+#else
+    TORCH_CHECK(false, "Attempting to create NCCL-based process group while NCCL is either not enabled or built")
+#endif // USE_C10D_NCCL
     } else {
       // TODO: discuss to figure out how to extend this to third party backends?
-      return pg;
+      TORCH_CHECK(false, "Unsupported backend type: ", backend);
     }
   }
 
@@ -831,6 +890,24 @@ c10::intrusive_ptr<ProcessGroup::Work> DistributedC10d::barrier(
   }
   work->wait();
   return empty_work;
+}
+
+void DistributedC10d::registerProcessGroupName(const c10::intrusive_ptr<ProcessGroup>& process_group, const std::string& name) {
+  auto it = std::find_if(
+      pg_names_.begin(),
+      pg_names_.end(),
+      [&](const std::pair<c10::intrusive_ptr<ProcessGroup>, std::string>&
+              pg_name) { return pg_name.second == name; });
+
+  TORCH_CHECK(it == pg_names_.end(), "Requested name already exists: ", name);
+
+  it = pg_names_.find(process_group);
+  TORCH_CHECK(
+      it == pg_names_.end(),
+      "Given process group has been registered before with name: ",
+      it->second);
+
+  pg_names_[process_group] = name;
 }
 
 } // namespace c10d
