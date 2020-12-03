@@ -232,12 +232,15 @@ def argument_not_this(
         return CppArgument(
             type=argument_type(a),
             name=a.name,
-            default=default_expr(a.default, a.type) if a.default is not None else None,
+            default=(default_expr(a.default, a.type)
+                     if a.default is not None and not a.cpp_no_default else None),
             argument=a,
         )
     elif isinstance(a, TensorOptionsArguments):
         default = None
-        if all(x.default == "None" for x in a.all()):
+        if all(x.cpp_no_default for x in a.all()):
+            default = None
+        elif all(x.default == "None" for x in a.all()):
             default = '{}'
         elif a.dtype.default == "long":
             default = 'at::kLong'  # TODO: this is wrong

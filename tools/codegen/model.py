@@ -153,9 +153,12 @@ class NativeFunction:
         """
         e = ei.copy()
 
+        cpp_no_default_args = e.pop('cpp_no_default_args', [])
+        assert isinstance(cpp_no_default_args, list)
+
         funcs = e.pop('func')
         assert isinstance(funcs, str), f'not a str: {funcs}'
-        func = FunctionSchema.parse(funcs)
+        func = FunctionSchema.parse(funcs, cpp_no_default_args)
 
         use_c10_dispatcher_s = e.pop('use_c10_dispatcher', None)
         if use_c10_dispatcher_s is None:
@@ -389,7 +392,7 @@ class FunctionSchema:
         return itertools.chain(self.arguments.positional, self.arguments.kwarg_only, self.arguments.out)
 
     @staticmethod
-    def parse(func: str) -> 'FunctionSchema':
+    def parse(func: str, cpp_no_default_args: List[str]) -> 'FunctionSchema':
         # We should probably get a proper parser here
         assert ' -> ' in func, "function schema missing return type (spaces are mandatory)"
         func_decl, return_decl = [x.strip() for x in func.split(' -> ')]
@@ -397,7 +400,7 @@ class FunctionSchema:
         assert args[-1] == ")", "Expecting closing )"
         args = args[:-1]
         name = OperatorName.parse(ops)
-        arguments = Arguments.parse(args)
+        arguments = Arguments.parse(args, cpp_no_default_args)
         returns = parse_returns(return_decl)
         r = FunctionSchema(
             name=name,
@@ -723,6 +726,7 @@ class Argument:
     name: str
     type: Type
     default: Optional[str]
+    cpp_no_default: bool  # If True, argument should not be defaulted in the C++ API
 
     # The semantics of the annotation field are a little strange.
     #
@@ -746,7 +750,7 @@ class Argument:
     annotation: Optional[Annotation]
 
     @staticmethod
-    def parse(arg: str) -> 'Argument':
+    def parse(arg: str, cpp_no_default_args: List[str]) -> 'Argument':
         name: str
         default: Optional[str]
         type_and_annot, name_and_default = arg.rsplit(' ', 1)
@@ -772,6 +776,7 @@ class Argument:
             type=type,
             default=default,
             annotation=annotation,
+            cpp_no_default=name in cpp_no_default_args,
         )
         assert str(r) == arg, f'{str(r)} != {arg}'
         return r
@@ -911,6 +916,7 @@ class Arguments:
                 type=a.type,
                 default=a.default,  # hmmm
                 annotation=None,
+                cpp_no_default=a.cpp_no_default,
             )
 
         return Arguments(
@@ -929,7 +935,8 @@ class Arguments:
 
 
     @staticmethod
-    def _preparse(args: str) -> Tuple[List[Argument], List[Argument], List[Argument]]:
+    def _preparse(args: str, cpp_no_default_args: List[str]) -> Tuple[
+            List[Argument], List[Argument], List[Argument]]:
         positional: List[Argument] = []
         kwarg_only: List[Argument] = []
         out: List[Argument] = []
@@ -944,7 +951,7 @@ class Arguments:
                 assert arguments_acc is positional, "invalid syntax: kwarg-only specifier * can only occur once"
                 arguments_acc = kwarg_only
                 continue
-            parg = Argument.parse(arg)
+            parg = Argument.parse(arg, cpp_no_default_args)
             # Currently, we rely directly on the invariant that there are NO
             # kwarg-only mutating arguments.  If you want to relax this,
             # we will need a more semantic way of matching that takes
@@ -963,7 +970,7 @@ class Arguments:
         return positional, kwarg_only, out
 
     @staticmethod
-    def parse(args: str) -> 'Arguments':
+    def parse(args: str, cpp_no_default_args: List[str]) -> 'Arguments':
         """
         Input: 'int x, int y, int z'
         """
@@ -973,7 +980,7 @@ class Arguments:
         # Then, we reparse positional and kwarg_only to separate
         # out the self argument and tensor options arguments.
 
-        positional, kwarg_only, out = Arguments._preparse(args)
+        positional, kwarg_only, out = Arguments._preparse(args, cpp_no_default_args)
 
         # Split self argument
         self_ix = None
