@@ -3803,13 +3803,19 @@ class TestONNXRuntime(unittest.TestCase):
         y = torch.randn(1, 2, 1)
         self.run_test(RemainderModel(), (x, y))
 
+    # Note: Integral Tensor remainder to floating-point scalar (not Tensor)
+    # can not be exported, since its type promotion logic is dependent
+    # on knowing the scalar types.
     def test_remainder_scalar(self):
         class RemainderModel(torch.nn.Module):
-            def forward(self, input):
-                return torch.remainder(input, 2.55)
+            def forward(self, input, mod):
+                return torch.remainder(input, mod)
 
-        x = torch.randint(10, (2, 3))
-        self.run_test(RemainderModel(), x)
+        # x = torch.randint(10, (2, 3))
+        x = torch.randn(2, 3)
+        y = torch.tensor(2.55)
+
+        self.run_test(RemainderModel(), (x, y))
 
     @skipIfUnsupportedMinOpsetVersion(10)
     def test_fmod(self):
