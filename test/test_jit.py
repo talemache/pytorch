@@ -331,6 +331,24 @@ class TestJit(JitTestCase):
             def dot(points, query, dim):
                 return (points * query).sum(dim)
 
+    def test_dict_comprehension(self):
+        def fn():
+            return {i : chr(i + 65) for i in range(4)}
+        self.checkScript(fn, ())
+
+    def test_dict_comprehension_scope(self):
+        def comprehension_can_access_outer_scope_variables():
+            lst = ["foo", "bar", "baz"]
+            return {l : len(l) for l in lst}
+
+        self.checkScript(comprehension_can_access_outer_scope_variables, ())
+
+        with self.assertRaisesRegex(RuntimeError, "undefined value i"):
+            @torch.jit.script
+            def outer_scope_cannot_access_comprehension_variables():
+                d = {i : chr(i + 65) for i in range(4)}
+                i = i + 1
+
     def test_constants_pkl(self):
         # This test asserts that the serialization archive includes a `constants.pkl`
         # file. This file is used by `torch.load` to determine whether a zip file
