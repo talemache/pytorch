@@ -3821,14 +3821,19 @@ class TestONNXRuntime(unittest.TestCase):
         y = torch.randn(1, 2, 1)
         self.run_test(FModModel(), (x, y))
 
+    # Note: Integral Tensor fmod to floating-point scalar (not Tensor)
+    # can not be exported, since its type promotion logic is dependent
+    # on knowing the scalar types.
     @skipIfUnsupportedMinOpsetVersion(10)
     def test_fmod_scalar(self):
         class FModModel(torch.nn.Module):
-            def forward(self, input):
-                return torch.fmod(input, 2.55)
+            def forward(self, input, mod):
+                return torch.fmod(input, mod)
 
         x = torch.randint(10, (2, 3))
-        self.run_test(FModModel(), x)
+        y = torch.tensor(2.55)
+
+        self.run_test(FModModel(), (x, y))
 
     @skipIfUnsupportedMinOpsetVersion(9)
     def test_gelu(self):
